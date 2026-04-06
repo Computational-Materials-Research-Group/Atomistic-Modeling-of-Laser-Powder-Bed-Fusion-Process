@@ -1,0 +1,395 @@
+# ============================================================
+#  LAMMPS: LPBF Al — FIXED substrate atom blowing
+#  Cite: MISHRA, A. (2026). Atomistic Modeling of Laser Powder Bed Fusion Process. Zenodo. https://doi.org/10.5281/zenodo.19438365
+#  ROOT CAUSES OF BLOWING BASE:
+#  1. Langevin damping too slow (100*dt = 0.1 ps) → energy
+#     builds in substrate faster than thermostat removes it
+#  2. Only 2 monolayers fixed → too few frozen atoms
+#  3. Only 2 monolayers thermostat → too thin to dissipate
+#  4. velocity applied to g_fixed atoms → initial kick
+#  5. Conduction layers had no energy sink
+#
+#  FIXES:
+#  1. Langevin damping = 10*dt (10x faster response)
+#  2. Fixed layers = 3 unit cells (6 monolayers)
+#  3. Thermostat layers = 2 unit cells (4 monolayers)
+#  4. velocity only on truly mobile atoms, zero on fixed
+#  5. Rescale thermostat velocity every step
+# ============================================================
+
+# -------------------------------------------------------
+# 0. USER PARAMETERS
+# -------------------------------------------------------
+variable  a0           equal  4.05
+variable  T_bed        equal  300
+variable  seed         equal  42
+
+variable  scan_speed   equal  0.4
+variable  laser_radius equal  50.0
+variable  laser_power  equal  0.40
+variable  dt           equal  0.001
+
+variable  equil_steps  equal  400000
+variable  cool_steps   equal  2000000
+
+variable  freq_equil   equal  500
+variable  freq_laser   equal  1
+variable  freq_cool    equal  100
+
+# -------------------------------------------------------
+# 1. INITIALIZATION
+# -------------------------------------------------------
+units         metal
+dimension     3
+atom_style    atomic
+boundary      p p f
+
+# -------------------------------------------------------
+# 2. GEOMETRY
+# -------------------------------------------------------
+variable  Nx_sub       equal  62
+variable  Ny_sub       equal  111
+
+# ── FIX: more substrate layers for better heat dissipation ──
+# Paper: 10 monolayers = 5 unit cells
+# Use 8 unit cells total:
+#   3 fixed (6 monolayers)
+#   2 thermostat (4 monolayers)
+#   3 conduction (6 monolayers)
+variable  Nz_fixed     equal  3     # unit cells frozen at bottom
+variable  Nz_therm     equal  2     # unit cells as Langevin thermostat
+variable  Nz_conduct   equal  3     # unit cells as NVE conduction
+variable  Nz_sub       equal  "v_Nz_fixed + v_Nz_therm + v_Nz_conduct"
+
+variable  R_pow        equal  24.9
+variable  D_pow        equal  "2.0 * v_R_pow"
+variable  spc          equal  "v_D_pow + 5.0"
+
+variable  sub_zhi_l    equal  "v_Nz_sub * v_a0"
+variable  sphere_gap   equal  3.0
+variable  pow_z0       equal  "v_sub_zhi_l + v_R_pow + v_sphere_gap"
+variable  box_zhi      equal  "v_sub_zhi_l + v_D_pow + v_sphere_gap + 30.0"
+variable  box_zhi_latt equal  "v_box_zhi / v_a0"
+
+# Layer Z boundaries (in Å)
+variable  z_fix_hi     equal  "v_Nz_fixed * v_a0"
+variable  z_therm_hi   equal  "(v_Nz_fixed + v_Nz_therm) * v_a0"
+variable  z_conduct_hi equal  "v_sub_zhi_l"
+
+# Sphere X/Y positions centred in box
+variable  x_offset     equal  "( v_Nx_sub*v_a0 - 3.0*v_spc ) / 2.0"
+variable  cx1          equal  "v_x_offset + 0.5*v_spc"
+variable  cx2          equal  "v_x_offset + 1.5*v_spc"
+variable  cx3          equal  "v_x_offset + 2.5*v_spc"
+
+variable  y_offset     equal  "( v_Ny_sub*v_a0 - 5.0*v_spc ) / 2.0"
+variable  cy1          equal  "v_y_offset + 0.5*v_spc"
+variable  cy2          equal  "v_y_offset + 1.5*v_spc"
+variable  cy3          equal  "v_y_offset + 2.5*v_spc"
+variable  cy4          equal  "v_y_offset + 3.5*v_spc"
+variable  cy5          equal  "v_y_offset + 4.5*v_spc"
+
+print "=== LAYER BOUNDARIES ==="
+print "  Fixed      : 0.0 to ${z_fix_hi} Ang (${Nz_fixed} unit cells)"
+print "  Thermostat : ${z_fix_hi} to ${z_therm_hi} Ang"
+print "  Conduction : ${z_therm_hi} to ${z_conduct_hi} Ang"
+print "  Substrate top: ${z_conduct_hi} Ang"
+print "  Sphere centres: ${pow_z0} Ang"
+print "========================"
+
+# -------------------------------------------------------
+# 3. BUILD BOX + SUBSTRATE
+# -------------------------------------------------------
+lattice  fcc ${a0} orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+
+region   reg_box block 0 ${Nx_sub} 0 ${Ny_sub} 0 ${box_zhi_latt} units lattice
+create_box  1 reg_box
+
+region   reg_sub block 0 ${Nx_sub} 0 ${Ny_sub} 0 ${Nz_sub} units lattice
+create_atoms 1 region reg_sub
+
+variable  sub_zhi  equal  "v_Nz_sub * v_a0"
+
+# -------------------------------------------------------
+# 4. CREATE POWDER SPHERES
+# -------------------------------------------------------
+region  s11 sphere ${cx1} ${cy1} ${pow_z0} ${R_pow} units box
+region  s12 sphere ${cx1} ${cy2} ${pow_z0} ${R_pow} units box
+region  s13 sphere ${cx1} ${cy3} ${pow_z0} ${R_pow} units box
+region  s14 sphere ${cx1} ${cy4} ${pow_z0} ${R_pow} units box
+region  s15 sphere ${cx1} ${cy5} ${pow_z0} ${R_pow} units box
+
+region  s21 sphere ${cx2} ${cy1} ${pow_z0} ${R_pow} units box
+region  s22 sphere ${cx2} ${cy2} ${pow_z0} ${R_pow} units box
+region  s23 sphere ${cx2} ${cy3} ${pow_z0} ${R_pow} units box
+region  s24 sphere ${cx2} ${cy4} ${pow_z0} ${R_pow} units box
+region  s25 sphere ${cx2} ${cy5} ${pow_z0} ${R_pow} units box
+
+region  s31 sphere ${cx3} ${cy1} ${pow_z0} ${R_pow} units box
+region  s32 sphere ${cx3} ${cy2} ${pow_z0} ${R_pow} units box
+region  s33 sphere ${cx3} ${cy3} ${pow_z0} ${R_pow} units box
+region  s34 sphere ${cx3} ${cy4} ${pow_z0} ${R_pow} units box
+region  s35 sphere ${cx3} ${cy5} ${pow_z0} ${R_pow} units box
+
+region  all_spheres union 15             &
+        s11 s12 s13 s14 s15              &
+        s21 s22 s23 s24 s25              &
+        s31 s32 s33 s34 s35
+
+create_atoms 1 region all_spheres
+
+# Switch to shrink-wrap Z immediately
+change_box all boundary p p s
+
+# -------------------------------------------------------
+# 5. GROUPS — clean non-overlapping definitions
+# -------------------------------------------------------
+region  reg_fixed    block INF INF INF INF 0.0            ${z_fix_hi}    units box
+region  reg_therm    block INF INF INF INF ${z_fix_hi}    ${z_therm_hi}  units box
+region  reg_conduct  block INF INF INF INF ${z_therm_hi}  ${z_conduct_hi} units box
+region  reg_powders  block INF INF INF INF ${z_conduct_hi} INF           units box
+
+group  g_fixed    region reg_fixed
+group  g_therm    region reg_therm
+group  g_conduct  region reg_conduct
+group  g_powders  region reg_powders
+
+# NVE-only group = conduction + powders (no thermostat on these)
+group  g_nve_only union g_conduct g_powders
+
+# All mobile (everything except fixed)
+group  g_mobile   subtract all g_fixed
+
+# -------------------------------------------------------
+# 6. POTENTIAL
+# -------------------------------------------------------
+pair_style   eam/alloy
+pair_coeff   * * Al99.eam.alloy Al
+mass         1  26.982
+
+neighbor      3.0 bin
+neigh_modify  every 1 delay 0 check yes page 100000 one 2000
+
+# -------------------------------------------------------
+# 7. COMPUTES
+# -------------------------------------------------------
+compute  cna      all  cna/atom 3.5
+compute  pe_atom  all  pe/atom
+compute  ke_atom  all  ke/atom
+compute  stress   all  stress/atom NULL virial
+
+variable  T_atom  atom  "c_ke_atom / (1.5 * 8.617e-5)"
+variable  S_hyd   atom  "-(c_stress[1]+c_stress[2]+c_stress[3])"
+variable  S_vm    atom  "sqrt(0.5*((c_stress[1]-c_stress[2])^2+(c_stress[2]-c_stress[3])^2+(c_stress[1]-c_stress[3])^2+6*(c_stress[4]^2+c_stress[5]^2+c_stress[6]^2)))"
+
+# -------------------------------------------------------
+# 8. THREE-STAGE MINIMIZATION
+# -------------------------------------------------------
+# Stage A: substrate only
+fix  fa_p g_powders  setforce 0.0 0.0 0.0
+fix  fa_f g_fixed    setforce 0.0 0.0 0.0
+min_style  quickmin
+minimize   1.0e-4 1.0e-4 3000 30000
+unfix fa_p
+unfix fa_f
+print "--- Min A done (substrate) ---"
+
+# Stage B: powders only
+fix  fb_c g_conduct  setforce 0.0 0.0 0.0
+fix  fb_t g_therm    setforce 0.0 0.0 0.0
+fix  fb_f g_fixed    setforce 0.0 0.0 0.0
+min_style  quickmin
+minimize   1.0e-4 1.0e-4 3000 30000
+unfix fb_c
+unfix fb_t
+unfix fb_f
+print "--- Min B done (powders) ---"
+
+# Stage C: full system
+fix  fc_f g_fixed    setforce 0.0 0.0 0.0
+min_style  cg
+minimize   1.0e-6 1.0e-8 10000 100000
+unfix fc_f
+print "--- Min C done (full) ---"
+
+# -------------------------------------------------------
+# 9. INITIAL CHECK DUMP
+# -------------------------------------------------------
+timestep  ${dt}
+
+dump  d_check all custom 1 dump_00_check.lammpstrj  &
+      id type x y z c_cna c_pe_atom
+run   0
+undump d_check
+print "--- Check dump written. Verify spheres in OVITO ---"
+
+# -------------------------------------------------------
+# 10. VELOCITY INITIALIZATION — FIX: zero fixed atoms
+# -------------------------------------------------------
+# Step 1: Set velocity on ALL mobile atoms
+velocity  g_mobile create ${T_bed} ${seed} mom yes rot yes dist gaussian
+
+# ── FIX: explicitly zero velocity on fixed atoms ─────────
+# Without this, fixed atoms can have residual velocities
+# from create_atoms that cause initial kick to neighbors
+velocity  g_fixed  set 0.0 0.0 0.0
+
+# -------------------------------------------------------
+# 11. FIX DEFINITIONS — one fix per group, no overlap
+# -------------------------------------------------------
+# Fixed bottom: zero force AND zero velocity
+fix  f_fixed    g_fixed    setforce 0.0 0.0 0.0
+
+# ── FIX: Langevin damping = 10*dt (was 100*dt) ──────────
+# 100*dt = 0.1 ps → thermostat too slow, energy accumulates
+# 10*dt  = 0.01 ps → 10x faster dissipation of laser energy
+fix  f_lang     g_therm    langevin ${T_bed} ${T_bed} $(10*dt) ${seed}
+fix  f_nve_th   g_therm    nve
+
+# Conduction + powder layers: pure NVE (no thermostat here)
+fix  f_nve_mob  g_nve_only nve
+
+# -------------------------------------------------------
+# 12. NVE/LIMIT WARM-UP (200 steps with displacement cap)
+# -------------------------------------------------------
+unfix  f_nve_mob
+fix    f_nvelim g_nve_only nve/limit 0.05
+
+thermo       50
+thermo_style custom step temp pe ke press atoms
+
+run   200
+
+unfix  f_nvelim
+fix    f_nve_mob g_nve_only nve
+
+# ── FIX: rescale thermostat layer to exactly T_bed ───────
+# After warm-up, ensure thermostat is at correct temperature
+velocity  g_therm scale ${T_bed}
+
+print "--- Warm-up done. Thermostat rescaled to ${T_bed} K ---"
+
+# -------------------------------------------------------
+# 13. STAGE 1 — EQUILIBRATION
+# -------------------------------------------------------
+dump  MASTER all custom ${freq_equil} dump_ALL.lammpstrj  &
+      id type x y z                                        &
+      c_cna c_pe_atom c_ke_atom v_T_atom                  &
+      c_stress[1] c_stress[2] c_stress[3]                 &
+      c_stress[4] c_stress[5] c_stress[6]                 &
+      v_S_hyd v_S_vm
+dump_modify  MASTER sort id append no
+
+thermo       5000
+thermo_style custom step temp pe ke press lx ly lz atoms
+
+# ── FIX: monitor thermostat layer temperature separately ──
+compute  T_therm  g_therm  temp
+compute  T_pow    g_powders temp
+thermo_style custom step temp c_T_therm c_T_pow pe ke press atoms
+
+print "--- Stage 1: EQUILIBRATION ---"
+run   ${equil_steps}
+
+undump  MASTER
+print "--- Equilibration done ---"
+
+# -------------------------------------------------------
+# 14. STAGE 2 — LASER SCAN (every 1 step)
+# -------------------------------------------------------
+variable  laser_cx  equal  "lx / 2.0"
+variable  laser_zlo equal  "${sub_zhi} - 5.0"
+variable  t_now     equal  "step * dt"
+variable  laser_y   equal  "v_scan_speed * v_t_now"
+
+region  laser_zone cylinder z ${laser_cx} v_laser_y      &
+        ${laser_radius} ${laser_zlo} INF                  &
+        units box move 0 v_scan_speed 0
+
+group   g_laser  dynamic all region laser_zone every 1
+fix     f_laser  g_laser  heat 1 ${laser_power}
+
+variable  scan_time  equal  "ly / v_scan_speed"
+variable  scan_steps equal  round(v_scan_time / v_dt)
+
+dump  MASTER all custom ${freq_laser} dump_ALL.lammpstrj  &
+      id type x y z                                        &
+      c_cna c_pe_atom c_ke_atom v_T_atom                  &
+      c_stress[1] c_stress[2] c_stress[3]                 &
+      c_stress[4] c_stress[5] c_stress[6]                 &
+      v_S_hyd v_S_vm
+dump_modify  MASTER sort id append yes
+
+thermo       100
+thermo_style custom step temp c_T_therm c_T_pow pe ke press atoms
+
+print "--- Stage 2: LASER SCAN ---"
+run  ${scan_steps}
+
+unfix   f_laser
+undump  MASTER
+print "--- Laser scan done ---"
+
+# -------------------------------------------------------
+# 15. STAGE 3 — COOLING (every freq_cool steps)
+# -------------------------------------------------------
+unfix  f_nve_mob
+unfix  f_nve_th
+unfix  f_lang
+
+variable  T_now  equal  temp
+
+# ── FIX: apply NVT to ALL mobile atoms during cooling ────
+# This ensures uniform temperature drop across all layers
+fix  f_cool_th  g_therm    nvt temp ${T_now} ${T_bed} $(10*dt)
+fix  f_cool_mob g_nve_only nvt temp ${T_now} ${T_bed} $(50*dt)
+
+dump  MASTER all custom ${freq_cool} dump_ALL.lammpstrj   &
+      id type x y z                                        &
+      c_cna c_pe_atom c_ke_atom v_T_atom                  &
+      c_stress[1] c_stress[2] c_stress[3]                 &
+      c_stress[4] c_stress[5] c_stress[6]                 &
+      v_S_hyd v_S_vm
+dump_modify  MASTER sort id append yes
+
+thermo       5000
+thermo_style custom step temp c_T_therm c_T_pow pe ke press atoms
+
+print "--- Stage 3: COOLING ---"
+run  ${cool_steps}
+
+undump  MASTER
+
+# Final frame
+dump  MASTER all custom 1 dump_ALL.lammpstrj               &
+      id type x y z                                         &
+      c_cna c_pe_atom c_ke_atom v_T_atom                   &
+      c_stress[1] c_stress[2] c_stress[3]                  &
+      c_stress[4] c_stress[5] c_stress[6]                  &
+      v_S_hyd v_S_vm
+dump_modify  MASTER sort id append yes
+run   0
+undump  MASTER
+
+unfix  f_cool_th
+unfix  f_cool_mob
+
+write_data     al_pbf_final.data
+write_restart  al_pbf_final.restart
+
+print "======================================================="
+print " DONE — dump_ALL.lammpstrj contains all stages"
+print ""
+print " WHY BASE WAS BLOWING — ROOT CAUSES FIXED:"
+print "   1. Langevin damping: 100*dt → 10*dt (faster sink)"
+print "   2. Fixed layers: 1 UC → 3 UC  (stronger anchor)"
+print "   3. Thermostat layers: 1 UC → 2 UC (better absorb)"
+print "   4. velocity g_fixed set 0 0 0 (no initial kick)"
+print "   5. velocity rescale after warm-up"
+print ""
+print " THERMO MONITOR during run:"
+print "   Column 3 = c_T_therm (thermostat layer temp)"
+print "   Column 4 = c_T_pow   (powder layer temp)"
+print "   Both should stay near 300K during equilibration"
+print "   c_T_pow rises sharply when laser hits"
+print "======================================================="

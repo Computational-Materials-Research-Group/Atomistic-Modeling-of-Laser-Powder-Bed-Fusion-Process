@@ -1,13 +1,33 @@
 # Atomistic Modeling of Laser Powder Bed Fusion Process
 
-<img width="1600" height="1200" alt="lpbf" src="https://github.com/user-attachments/assets/fc29108a-6b28-448c-9158-336d3be096bf" />
-
 [![LAMMPS](https://img.shields.io/badge/LAMMPS-Molecular%20Dynamics-blue)](https://www.lammps.org/)
 [![Language](https://img.shields.io/badge/Language-LAMMPS%20Script-orange)](https://docs.lammps.org/)
 [![Material](https://img.shields.io/badge/Material-Aluminum%20(Al)-silver)](https://en.wikipedia.org/wiki/Aluminium)
 [![GitHub](https://img.shields.io/badge/GitHub-akshansh11-black?logo=github)](https://github.com/akshansh11)
 
+
+<img width="1600" height="1200" alt="lpbf" src="https://github.com/user-attachments/assets/714f897f-ce38-4ed9-873f-564ca4894202" />
+
 A LAMMPS input script for simulating **Laser Powder Bed Fusion (LPBF)** of Aluminum at the atomistic scale. The script models laser melting of Al powder particles on an Al substrate, including equilibration, laser scanning, and cooling stages — with robust fixes for substrate stability.
+
+---
+
+## Citation
+
+If you use this work, please cite:
+
+> Mishra, A. (2026). *Atomistic Modeling of Laser Powder Bed Fusion Process*. Zenodo. https://doi.org/10.5281/zenodo.19438365
+
+```bibtex
+@misc{mishra2026lpbf,
+  author       = {Mishra, A.},
+  title        = {Atomistic Modeling of Laser Powder Bed Fusion Process},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.19438365},
+  url          = {https://doi.org/10.5281/zenodo.19438365}
+}
+```
 
 ---
 
